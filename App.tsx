@@ -1,9 +1,13 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Plus, LayoutGrid, AlertCircle, Youtube, Tv } from 'lucide-react';
 import { Stream } from './types';
 import { getYouTubeVideoId, generateId } from './utils';
 import StreamCard from './components/StreamCard';
 import { decompressFromEncodedURIComponent } from 'lz-string';
+
+const BASE_PATH = (import.meta.env.BASE_URL || '/');
+const NORMALIZED_BASE_PATH =
+  BASE_PATH !== '/' && BASE_PATH.endsWith('/') ? BASE_PATH.slice(0, -1) : BASE_PATH;
 
 interface EncodedStream {
   v: string; // videoId
@@ -94,7 +98,7 @@ const parseLegacyStreamsParam = (value: string | null): EncodedStream[] => {
 };
 
 const splitPathname = (pathname: string) => {
-  if (!pathname) return { basePath: '/', videoIds: [] };
+  if (!pathname) return [];
   const segments = pathname.split('/').filter(Boolean);
   const ids: string[] = [];
   let index = segments.length - 1;
@@ -104,9 +108,7 @@ const splitPathname = (pathname: string) => {
     index--;
   }
 
-  const baseSegments = segments.slice(0, index + 1);
-  const basePath = `/${baseSegments.join('/')}` || '/';
-  return { basePath, videoIds: ids };
+  return ids;
 };
 
 const App: React.FC = () => {
@@ -114,13 +116,20 @@ const App: React.FC = () => {
   const [streams, setStreams] = useState<Stream[]>([]);
   const [activeAudioId, setActiveAudioId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const basePathRef = useRef('/');
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const params = new URLSearchParams(window.location.search);
-    const { basePath, videoIds: pathVideoIds } = splitPathname(window.location.pathname);
-    basePathRef.current = basePath;
+    const pathname = window.location.pathname;
+    let relativePath = pathname;
+    if (
+      NORMALIZED_BASE_PATH !== '/' &&
+      pathname.startsWith(NORMALIZED_BASE_PATH)
+    ) {
+      relativePath = pathname.slice(NORMALIZED_BASE_PATH.length) || '/';
+    }
+
+    const pathVideoIds = splitPathname(relativePath);
 
     const audioParam = params.get('audio') || undefined;
     let restoredStreams: Stream[] = pathVideoIds.length
@@ -185,7 +194,7 @@ const App: React.FC = () => {
     }
 
     const query = params.toString();
-    const newUrl = `${basePathRef.current}${query ? `?${query}` : ''}`;
+    const newUrl = `${BASE_PATH}${query ? `?${query}` : ''}`;
     const currentUrl = `${window.location.pathname}${window.location.search}`;
 
     if (newUrl !== currentUrl) {
