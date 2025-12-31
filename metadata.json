@@ -1,0 +1,5 @@
+{
+  "name": "MultiStream View",
+  "description": "A grid-based YouTube Live viewer allowing simultaneous playback with selective audio focus.",
+  "requestFramePermissions": []
+}
