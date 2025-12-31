@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Plus, LayoutGrid, AlertCircle, Youtube, Tv } from 'lucide-react';
 import { Stream } from './types';
 import { getYouTubeVideoId, generateId } from './utils';
@@ -59,6 +59,22 @@ const parseCompressedState = (value: string | null): EncodedState | null => {
   return null;
 };
 
+const parseStreamsParam = (value: string | null): EncodedStream[] => {
+  if (!value) return [];
+  return value
+    .split('/')
+    .map(segment => {
+      if (!segment) return null;
+      const [videoId, labelPart] = segment.split('~', 2);
+      if (!videoId) return null;
+      return {
+        v: videoId,
+        l: labelPart ? decodeURIComponent(labelPart) : undefined,
+      };
+    })
+    .filter((entry): entry is EncodedStream => !!entry);
+};
+
 const parseLegacyStreamsParam = (value: string | null): EncodedStream[] => {
   if (!value) return [];
   try {
@@ -77,10 +93,20 @@ const parseLegacyStreamsParam = (value: string | null): EncodedStream[] => {
   return [];
 };
 
-const getVideoIdsFromPathname = (pathname: string): string[] => {
-  if (!pathname) return [];
+const splitPathname = (pathname: string) => {
+  if (!pathname) return { basePath: '/', videoIds: [] };
   const segments = pathname.split('/').filter(Boolean);
-  return segments.filter(segment => /^[\w-]{5,}$/.test(segment));
+  const ids: string[] = [];
+  let index = segments.length - 1;
+
+  while (index >= 0 && /^[\w-]{5,}$/.test(segments[index])) {
+    ids.unshift(segments[index]);
+    index--;
+  }
+
+  const baseSegments = segments.slice(0, index + 1);
+  const basePath = `/${baseSegments.join('/')}` || '/';
+  return { basePath, videoIds: ids };
 };
 
 const App: React.FC = () => {
@@ -88,26 +114,35 @@ const App: React.FC = () => {
   const [streams, setStreams] = useState<Stream[]>([]);
   const [activeAudioId, setActiveAudioId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const basePathRef = useRef('/');
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const params = new URLSearchParams(window.location.search);
-    const pathVideoIds = getVideoIdsFromPathname(window.location.pathname);
+    const { basePath, videoIds: pathVideoIds } = splitPathname(window.location.pathname);
+    basePathRef.current = basePath;
+
+    const audioParam = params.get('audio') || undefined;
     let restoredStreams: Stream[] = pathVideoIds.length
       ? hydrateStreamsFromIds(pathVideoIds)
       : [];
-    let activeVideoId: string | undefined;
+    let activeVideoId: string | undefined = audioParam;
 
     if (!restoredStreams.length) {
-      const compressedState = parseCompressedState(params.get('s'));
-      if (compressedState) {
-        restoredStreams = hydrateStreamsFromEntries(compressedState.s);
-        activeVideoId = compressedState.a;
+      const streamsParamValue = params.get('streams');
+      const streamEntries = parseStreamsParam(streamsParamValue);
+      if (streamEntries.length) {
+        restoredStreams = hydrateStreamsFromEntries(streamEntries);
       } else {
-        const legacyEntries = parseLegacyStreamsParam(params.get('streams'));
-        if (legacyEntries.length) {
-          restoredStreams = hydrateStreamsFromEntries(legacyEntries);
-          activeVideoId = params.get('audio') || undefined;
+        const compressedState = parseCompressedState(params.get('s'));
+        if (compressedState) {
+          restoredStreams = hydrateStreamsFromEntries(compressedState.s);
+          activeVideoId = compressedState.a;
+        } else {
+          const legacyEntries = parseLegacyStreamsParam(streamsParamValue);
+          if (legacyEntries.length) {
+            restoredStreams = hydrateStreamsFromEntries(legacyEntries);
+          }
         }
       }
     }
@@ -135,15 +170,28 @@ const App: React.FC = () => {
     params.delete('streams');
     params.delete('audio');
 
+    if (streams.length) {
+      const serialized = streams
+        .map(stream => `${stream.videoId}${stream.label ? `~${encodeURIComponent(stream.label)}` : ''}`)
+        .join('/');
+      params.set('streams', serialized);
+
+      if (activeAudioId) {
+        const activeStream = streams.find(stream => stream.id === activeAudioId);
+        if (activeStream) {
+          params.set('audio', activeStream.videoId);
+        }
+      }
+    }
+
     const query = params.toString();
-    const newPath = streams.length ? `/${streams.map(stream => stream.videoId).join('/')}` : '/';
-    const newUrl = `${newPath}${query ? `?${query}` : ''}`;
+    const newUrl = `${basePathRef.current}${query ? `?${query}` : ''}`;
     const currentUrl = `${window.location.pathname}${window.location.search}`;
 
     if (newUrl !== currentUrl) {
       window.history.replaceState(null, '', newUrl);
     }
-  }, [streams]);
+  }, [streams, activeAudioId]);
 
   const handleAddStream = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
